@@ -33,12 +33,19 @@ cleanup() {
 }
 trap cleanup HUP INT TERM
 
+on_battery() {
+  for bat_file in /sys/class/power_supply/BAT*/status; do
+    read battery < "$bat_file"
+    [ "$battery" = Discharging ] && return 0
+  done
+  return 1
+}
+
 while true; do
   sleep "$loop_delay"
 
   # Resume all if we are not running on battery
-  read battery </sys/class/power_supply/BAT0/status
-  if [ "$battery" != Discharging ]; then
+  if ! on_battery; then
     resume
     continue
   fi
