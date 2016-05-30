@@ -20,7 +20,7 @@ declare -A wclass
 
 # Let xprop run in spy mode and output to named pipe
 xprop_pipe="$(mktemp -u /tmp/browser-suspender.XXXXXXX)"
-mkfifo "$xprop_pipe"
+mkfifo "$xprop_pipe" || exit 1
 exec 10<>"$xprop_pipe"  # assign pipe to file descriptor
 xprop -spy -root _NET_ACTIVE_WINDOW > "$xprop_pipe" &
 xprop_pid="$!"
