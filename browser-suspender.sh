@@ -8,15 +8,22 @@
 # (c) Martin Kourim <kourim@protonmail.com>  2016
 # MIT licence if this is even copyrightable
 
-hash xprop 2>/dev/null || { echo "Please install xprop"; exit 1; }
+hash xprop 2>/dev/null || { echo "Please install xprop" >&2; exit 1; }
 
-loop_delay=1.5  # [s]
+read_timeout=4  # [s]
 stop_delay=10   # [s]
 
 declare -A procs
 declare -A pstate
 declare -A last_in_focus
 declare -A wclass
+
+# Let xprop run in spy mode and output to named pipe
+xprop_pipe="$(mktemp -u /tmp/browser-suspender.XXXXXXX)"
+mkfifo "$xprop_pipe"
+exec 10<>"$xprop_pipe"  # assign pipe to file descriptor
+xprop -spy -root _NET_ACTIVE_WINDOW > "$xprop_pipe" &
+xprop_pid="$!"
 
 resume() {
   for proc in "${procs[@]}"; do
@@ -29,6 +36,8 @@ resume() {
 
 cleanup() {
   resume
+  kill "$xprop_pid"
+  rm -f "$xprop_pipe"
   exit 0
 }
 trap cleanup HUP INT TERM
@@ -42,7 +51,9 @@ on_battery() {
 }
 
 while true; do
-  sleep "$loop_delay"
+  # Any changes in root window? Return immediately of so,
+  # otherwise wait for "$read_timeout" seconds.
+  read -t "$read_timeout" xprop_out <&10
 
   # Resume all if we are not running on battery
   if ! on_battery; then
@@ -51,8 +62,7 @@ while true; do
   fi
 
   # Get active window id
-  window="$(xprop -root _NET_ACTIVE_WINDOW)"
-  window="${window#*# }"
+  [ -n "$xprop_out" ] && window="${xprop_out#*# }"
   # What kind of window is it?
   [ -z "${wclass[$window]}" ] && wclass[$window]="$(xprop -id "$window" WM_CLASS)"
 
@@ -79,8 +89,7 @@ while true; do
     continue
   fi
 
-  # Not Firefox!
-  # If it's running and it's been long enough, stop it now.
+  # Not Firefox! If it's running and it's been long enough, stop it now.
   for key in "${!procs[@]}"; do
     proc="${procs[$key]}"
     if [ -z "$proc" ] || [ "${pstate[$proc]}" = stopped ]; then
