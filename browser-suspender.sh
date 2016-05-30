@@ -13,6 +13,12 @@ hash xprop 2>/dev/null || { echo "Please install xprop" >&2; exit 1; }
 read_timeout=4  # [s]
 stop_delay=10   # [s]
 
+battery_mode=false
+case "$1" in
+  -b | *battery) battery_mode=true ;;
+  -h | *help) echo "Usage: ${0##*/} [-b|-battery]" >&2; exit 0 ;;
+esac
+
 declare -A procs
 declare -A pstate
 declare -A last_in_focus
@@ -56,7 +62,7 @@ while true; do
   read -t "$read_timeout" xprop_out <&10
 
   # Resume all if we are not running on battery
-  if ! on_battery; then
+  if [ "$battery_mode" != true ] && ! on_battery; then
     resume
     continue
   fi
