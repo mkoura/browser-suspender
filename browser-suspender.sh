@@ -51,7 +51,7 @@ on_battery() {
 }
 
 while true; do
-  # Any changes in root window? Return immediately of so,
+  # Any changes in root window? Return immediately if so,
   # otherwise wait for "$read_timeout" seconds.
   read -t "$read_timeout" xprop_out <&10
 
@@ -67,7 +67,7 @@ while true; do
   [ -z "${wclass[$window]}" ] && wclass[$window]="$(xprop -id "$window" WM_CLASS)"
 
   if [[ "${wclass[$window]}" =~ Navigator ]]; then
-    # Firefox!  We know it is running.  Make sure we
+    # Firefox! We know it is running. Make sure we
     # have its pid and update the last seen date.
     # If we stopped it, resume again.
     window_proc="${procs[$window]}"
