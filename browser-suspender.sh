@@ -8,8 +8,6 @@
 # (c) Martin Kourim <kourim@protonmail.com>  2016
 # MIT licence if this is even copyrightable
 
-hash xprop 2>/dev/null || { echo "Please install xprop" >&2; exit 1; }
-
 read_timeout=4  # [s]
 stop_delay=10   # [s]
 
@@ -19,10 +17,7 @@ case "$1" in
   -h | *help) echo "Usage: ${0##*/} [-b|-battery]" >&2; exit 0 ;;
 esac
 
-declare -A procs
-declare -A pstate
-declare -A last_in_focus
-declare -A wclass
+hash xprop 2>/dev/null || { echo "Please install xprop" >&2; exit 1; }
 
 # Let xprop run in spy mode and output to named pipe
 xprop_pipe="$(mktemp -u /tmp/browser-suspender.XXXXXXX)"
@@ -31,11 +26,18 @@ exec 10<>"$xprop_pipe"  # assign pipe to file descriptor
 xprop -spy -root _NET_ACTIVE_WINDOW > "$xprop_pipe" &
 xprop_pid="$!"
 
+ARR="procs pstate last_in_focus wclass"
+for i in $ARR; do declare -A "$i"; done
+
 resume() {
   for proc in "${procs[@]}"; do
     if [ -n "$proc" ] && [ "${pstate[$proc]}" = stopped ]; then
       echo "$(date)  Resuming firefox @ $proc"
-      kill -CONT "$proc"
+      if kill -CONT "$proc"; then
+        pstate[$proc]=running
+      else
+        unset -v procs["$window"]
+      fi
     fi
   done
 }
@@ -61,14 +63,17 @@ while true; do
   # otherwise wait for "$read_timeout" seconds.
   read -t "$read_timeout" xprop_out <&10
 
-  # Resume all if we are not running on battery
+  # Resume all and clear all collected data if we are not running on battery
   if [ "$battery_mode" != true ] && ! on_battery; then
     resume
+    [ "${#wclass[@]}" -gt 0 ] && for i in $ARR; do unset -v "$i"; declare -A "$i"; done
     continue
   fi
 
   # Get active window id
   [ -n "$xprop_out" ] && window="${xprop_out#*# }"
+  [ -z "$window" ] && continue
+
   # What kind of window is it?
   [ -z "${wclass[$window]}" ] && wclass[$window]="$(xprop -id "$window" WM_CLASS)"
 
@@ -82,7 +87,7 @@ while true; do
       if kill -CONT "$window_proc"; then
         pstate[$window_proc]=running
       else
-        procs[$window]=''
+        unset -v procs["$window"]
       fi
     fi
 
@@ -107,7 +112,7 @@ while true; do
       pstate[$proc]=stopped
       if ! kill -STOP "$proc"; then
         pstate[$proc]=running
-        procs[$key]=''
+        unset -v procs["$key"]
       fi
     fi
   done
