@@ -46,9 +46,9 @@ cleanup() {
   resume
   kill "$xprop_pid"
   rm -f "$xprop_pipe"
-  exit 0
 }
-trap cleanup HUP INT TERM
+trap cleanup EXIT
+trap exit HUP INT TERM
 
 on_battery() {
   for bat_file in /sys/class/power_supply/BAT*/status; do
@@ -72,7 +72,7 @@ while true; do
 
   # Get active window id
   [ -n "$xprop_out" ] && window="${xprop_out#*# }"
-  [ -z "$window" ] && continue
+  [ -z "$window" -o "$window" = '0x0' ] && continue
 
   # What kind of window is it?
   [ -z "${wclass[$window]}" ] && wclass[$window]="$(xprop -id "$window" WM_CLASS)"
