@@ -101,13 +101,14 @@ while true; do
   fi
 
   # Not Firefox! If it's running and it's been long enough, stop it now.
+  now="$(date +%s)"
   for key in "${!procs[@]}"; do
     proc="${procs[$key]}"
     if [ -z "$proc" ] || [ "${pstate[$proc]}" = stopped ]; then
       continue
     fi
 
-    if [ $(($(date +%s) - ${last_in_focus[$key]})) -ge "$stop_delay" ]; then
+    if [ $((now - ${last_in_focus[$key]})) -ge "$stop_delay" ]; then
       echo "$(date)  Stopping firefox @ $proc"
       pstate[$proc]=stopped
       if ! kill -STOP "$proc"; then
