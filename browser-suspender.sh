@@ -35,8 +35,8 @@ ARR="procs pstate last_in_focus wclass"
 for i in $ARR; do declare -A "$i"; done
 
 resume() {
-  for pid in "${procs[@]}"; do
-    if [ -n "$pid" ] && [ "${pstate[$pid]}" = stopped ]; then
+  for pid in "${!pstate[@]}"; do
+    if [ "${pstate[$pid]}" = stopped ]; then
       if kill -CONT "$pid"; then
         echo "$(date)  Resuming browser @ $pid"
         pstate[$pid]=running
@@ -96,8 +96,8 @@ while true; do
       # Browser! We know it is running. Make sure we
       # have its pid and update the last seen date.
       # If we stopped it, resume again.
-      last_in_focus[$window]="$now"
       pid="${procs[$window]}"
+
       if [ -n "$pid" ] && [ "${pstate[$pid]}" = stopped ]; then
         if kill -CONT "$pid"; then
           echo "$(date)  Resuming browser @ $pid"
@@ -107,35 +107,40 @@ while true; do
 
       if [ -z "$pid" ]; then
         wpid="$(xprop -id "$window" _NET_WM_PID)"
-        procs[$window]="${wpid#*= }"
+        pid="${wpid#*= }"
+        procs[$window]="$pid"
+        pstate[$pid]=running
       fi
+
+      last_in_focus[$pid]="$now"
     ;;
   esac
 
-  # Stop browsers that were running long enough
-  for key in "${!procs[@]}"; do
-    pid="${procs[$key]}"
-    if [ -z "$pid" ] || [ "${pstate[$pid]}" = stopped ] || [ "${pstate[$pid]}" = unknown ]; then
+  # Stop browsers
+  for pid in "${!pstate[@]}"; do
+    focus_t="${last_in_focus[$pid]}"
+
+    if [[ -z "$focus_t" || "${pstate[$pid]}" = stopped || "${pstate[$pid]}" = unknown ]]; then
       continue
     fi
 
-    if [ $((now - ${last_in_focus[$key]})) -ge "$stop_delay" ]; then
-      # Suspend the process
-      if kill -STOP "$pid" 2>/dev/null; then
-        echo "$(date)  Stopping browser @ $pid"
-        pstate[$pid]=stopped
+    # Out of focus for long enough?
+    (( (now - focus_t) < stop_delay )) && continue
+
+    # Suspend the process
+    if kill -STOP "$pid" 2>/dev/null; then
+      echo "$(date)  Stopping browser @ $pid"
+      pstate[$pid]=stopped
+    else
+      if [ -e /proc/"$pid" ]; then
+        # We don't have permissions to send signal
+        pstate[$pid]=unknown
       else
-        if [ -e /proc/"$pid" ]; then
-          # We don't have permissions
-          pstate[$pid]=unknown
-        else
-          # The process no longer exists, clean up
-          unset -v pstate[$pid]
-          unset -v procs["$key"]
-          unset -v last_in_focus["$key"]
-          unset -v wclass["$key"]
-        fi
+        # The process no longer exists, clean up
+        unset -v pstate[$pid]
+        unset -v last_in_focus["$pid"]
       fi
     fi
+
   done
 done
