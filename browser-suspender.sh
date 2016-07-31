@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# browser-suspender: Periodically check whether firefox is out of focus
-# and STOP it in that case after a time delay; if in focus but stopped,
+# browser-suspender: Periodically check whether Firefox-based browser is out of
+# focus and STOP it in that case after a time delay; if in focus but stopped,
 # send SIGCONT.
 #
 # (c) Petr Baudis <pasky@ucw.cz>  2014
@@ -10,6 +10,11 @@
 
 read_timeout=4  # [s]
 stop_delay=10   # [s]
+
+# Max number of cached WIN_CLASS entries
+max_cached_entries=1000
+# Cached WIN_CLASS counter
+wincount=0
 
 battery_mode=false
 case "$1" in
@@ -30,13 +35,11 @@ ARR="procs pstate last_in_focus wclass"
 for i in $ARR; do declare -A "$i"; done
 
 resume() {
-  for proc in "${procs[@]}"; do
-    if [ -n "$proc" ] && [ "${pstate[$proc]}" = stopped ]; then
-      echo "$(date)  Resuming firefox @ $proc"
-      if kill -CONT "$proc"; then
-        pstate[$proc]=running
-      else
-        unset -v procs["$window"]
+  for pid in "${procs[@]}"; do
+    if [ -n "$pid" ] && [ "${pstate[$pid]}" = stopped ]; then
+      if kill -CONT "$pid"; then
+        echo "$(date)  Resuming browser @ $pid"
+        pstate[$pid]=running
       fi
     fi
   done
@@ -66,54 +69,63 @@ while true; do
   # Resume all and clear all collected data if we are not running on battery
   if [ "$battery_mode" != true ] && ! on_battery; then
     resume
-    [ "${#wclass[@]}" -gt 0 ] && for i in $ARR; do unset -v "$i"; declare -A "$i"; done
+    if [ "$wincount" -gt 0 ]; then
+      for i in $ARR; do unset -v "$i"; declare -A "$i"; done
+      wincount=0
+    fi
     continue
   fi
+
+  now="$(date +%s)"
 
   # Get active window id
   [ -n "$xprop_out" ] && window="${xprop_out#*# }"
   [ -z "$window" -o "$window" = '0x0' ] && continue
 
-  # What kind of window is it?
-  [ -z "${wclass[$window]}" ] && wclass[$window]="$(xprop -id "$window" WM_CLASS)"
-
-  if [[ "${wclass[$window]}" =~ Navigator ]]; then
-    # Firefox! We know it is running. Make sure we
-    # have its pid and update the last seen date.
-    # If we stopped it, resume again.
-    window_proc="${procs[$window]}"
-    if [ -n "$window_proc" ] && [ "${pstate[$window_proc]}" = stopped ]; then
-      echo "$(date)  Resuming firefox @ $window_proc"
-      if kill -CONT "$window_proc"; then
-        pstate[$window_proc]=running
-      else
-        unset -v procs["$window"]
-      fi
-    fi
-
-    last_in_focus[$window]="$(date +%s)"
-    if [ -z "${procs[$window]}" ]; then
-      wpid="$(xprop -id "$window" _NET_WM_PID)"
-      procs[$window]="${wpid#*= }"
-    fi
-
-    continue
+  if [ -z "${wclass[$window]}" ]; then
+    # Clear cache
+    [ "$wincount" -gt "$max_cached_entries" ] && { unset -v wclass; declare -A wclass; wincount=0; }
+    # What kind of window is it?
+    wclass[$window]="$(xprop -id "$window" WM_CLASS)"
+    ((wincount++))
   fi
 
-  # Not Firefox! If it's running and it's been long enough, stop it now.
-  now="$(date +%s)"
+  case "${wclass[$window]}" in
+    # 'Navigator' is not enough - it will not match e.g. save file dialog
+    *Navigator*|*Firefox*|*Iceweasel*|*PaleMoon*)
+      # Browser! We know it is running. Make sure we
+      # have its pid and update the last seen date.
+      # If we stopped it, resume again.
+      last_in_focus[$window]="$now"
+      pid="${procs[$window]}"
+      if [ -n "$pid" ] && [ "${pstate[$pid]}" = stopped ]; then
+        if kill -CONT "$pid"; then
+          echo "$(date)  Resuming browser @ $pid"
+          pstate[$pid]=running
+        fi
+      fi
+
+      if [ -z "$pid" ]; then
+        wpid="$(xprop -id "$window" _NET_WM_PID)"
+        procs[$window]="${wpid#*= }"
+      fi
+    ;;
+  esac
+
+  # Stop browsers that were running long enough
   for key in "${!procs[@]}"; do
-    proc="${procs[$key]}"
-    if [ -z "$proc" ] || [ "${pstate[$proc]}" = stopped ]; then
+    pid="${procs[$key]}"
+    if [ -z "$pid" ] || [ "${pstate[$pid]}" = stopped ] || [ "${pstate[$pid]}" = unknown ]; then
       continue
     fi
 
     if [ $((now - ${last_in_focus[$key]})) -ge "$stop_delay" ]; then
-      echo "$(date)  Stopping firefox @ $proc"
-      pstate[$proc]=stopped
-      if ! kill -STOP "$proc"; then
-        pstate[$proc]=running
-        unset -v procs["$key"]
+      # Stop the process if it still exists and we have permissions
+      if kill -STOP "$pid" 2>/dev/null; then
+        echo "$(date)  Stopping browser @ $pid"
+        pstate[$pid]=stopped
+      else
+        pstate[$pid]=unknown
       fi
     fi
   done
