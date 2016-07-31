@@ -120,12 +120,21 @@ while true; do
     fi
 
     if [ $((now - ${last_in_focus[$key]})) -ge "$stop_delay" ]; then
-      # Stop the process if it still exists and we have permissions
+      # Suspend the process
       if kill -STOP "$pid" 2>/dev/null; then
         echo "$(date)  Stopping browser @ $pid"
         pstate[$pid]=stopped
       else
-        pstate[$pid]=unknown
+        if [ -e /proc/"$pid" ]; then
+          # We don't have permissions
+          pstate[$pid]=unknown
+        else
+          # The process no longer exists, clean up
+          unset -v pstate[$pid]
+          unset -v procs["$key"]
+          unset -v last_in_focus["$key"]
+          unset -v wclass["$key"]
+        fi
       fi
     fi
   done
