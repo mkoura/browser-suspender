@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# browser-suspender: Periodically check whether Firefox-based browser is out of
+# browser-suspender: Periodically check whether the web browser is out of
 # focus and STOP it in that case after a time delay; if in focus but stopped,
 # send SIGCONT.
 #
@@ -18,6 +18,7 @@ wincount=0
 
 battery_mode=false
 case "$1" in
+  # Disregard whether we run on battery or not and suspend / resume browsers
   -b | *battery) battery_mode=true ;;
   -h | *help) echo "Usage: ${0##*/} [-b|-battery]" >&2; exit 0 ;;
 esac
@@ -34,11 +35,43 @@ xprop_pid="$!"
 ARR="procs pstate last_in_focus wclass"
 for i in $ARR; do declare -A "$i"; done
 
+get_pids() {
+  # Parses output of `ps` to determine the process tree. Not very elegant,
+  # but the `ps` is run only once and thus the number of wakeups is low.
+  pids="$1"
+  while read line; do
+    if [ -z "$spaces" ]; then
+      case "$line" in
+        "${1} "*)
+          sline="${line#* }"
+          sline="${sline% *}"
+          # Spaces between "pid" and "process name" for child processes
+          # in the output of `ps`
+          spaces="$sline    "
+        ;;
+      esac
+    else
+      case "$line" in
+        *"${spaces}"*)
+          read pid _ < <(echo "$line")
+          pids="${pids} $pid"
+        ;;
+        *)
+          break
+        ;;
+      esac
+    fi
+  done < <(ps -eH -o pid,fname)
+  # Print pids of all subproceses
+  echo "$pids"
+}
+
 resume() {
   for pid in "${!pstate[@]}"; do
     if [ "${pstate[$pid]}" = stopped ]; then
-      if kill -CONT "$pid"; then
-        echo "$(date)  Resuming browser @ $pid"
+      pids="$(get_pids "$pid")"
+      if kill -CONT $pids; then
+        echo "$(date)  Resuming browser @ $pids"
         pstate[$pid]=running
       fi
     fi
@@ -80,7 +113,7 @@ while true; do
 
   # Get active window id
   [ -n "$xprop_out" ] && window="${xprop_out#*# }"
-  [ -z "$window" -o "$window" = '0x0' ] && continue
+  [ -z "$window" ] || [ "$window" = '0x0' ] && continue
 
   if [ -z "${wclass[$window]}" ]; then
     # Clear cache
@@ -91,6 +124,8 @@ while true; do
   fi
 
   case "${wclass[$window]}" in
+    # It's not safe to suspend Chrome because of chrome-based apps. Browser
+    # and apps share the same processes. Leaving Chrome out.
     # 'Navigator' is not enough - it will not match e.g. save file dialog
     *Navigator*|*Firefox*|*Iceweasel*|*PaleMoon*)
       # Browser! We know it is running. Make sure we
@@ -98,18 +133,19 @@ while true; do
       # If we stopped it, resume again.
       pid="${procs[$window]}"
 
-      if [ -n "$pid" ] && [ "${pstate[$pid]}" = stopped ]; then
-        if kill -CONT "$pid"; then
-          echo "$(date)  Resuming browser @ $pid"
-          pstate[$pid]=running
-        fi
-      fi
-
       if [ -z "$pid" ]; then
         wpid="$(xprop -id "$window" _NET_WM_PID)"
         pid="${wpid#*= }"
         procs[$window]="$pid"
-        pstate[$pid]=running
+        [ -z "${pstate[$pid]}" ] && pstate[$pid]=running
+      fi
+
+      if [ -n "$pid" ] && [ "${pstate[$pid]}" = stopped ]; then
+        pids="$(get_pids "$pid")"
+        if kill -CONT $pids; then
+          echo "$(date)  Resuming browser @ $pids"
+          pstate[$pid]=running
+        fi
       fi
 
       last_in_focus[$pid]="$now"
@@ -120,7 +156,7 @@ while true; do
   for pid in "${!pstate[@]}"; do
     focus_t="${last_in_focus[$pid]}"
 
-    if [[ -z "$focus_t" || "${pstate[$pid]}" = stopped || "${pstate[$pid]}" = unknown ]]; then
+    if [[ -z "$focus_t" || "${pstate[$pid]}" = stopped || "${pstate[$pid]}" = blacklist ]]; then
       continue
     fi
 
@@ -128,16 +164,17 @@ while true; do
     (( (now - focus_t) < stop_delay )) && continue
 
     # Suspend the process
-    if kill -STOP "$pid" 2>/dev/null; then
-      echo "$(date)  Stopping browser @ $pid"
+    pids="$(get_pids "$pid")"
+    if kill -STOP $pids 2>/dev/null; then
+      echo "$(date)  Stopping browser @ $pids"
       pstate[$pid]=stopped
     else
       if [ -e /proc/"$pid" ]; then
         # We don't have permissions to send signal
-        pstate[$pid]=unknown
+        pstate[$pid]=blacklist
       else
         # The process no longer exists, clean up
-        unset -v pstate[$pid]
+        unset -v pstate["$pid"]
         unset -v last_in_focus["$pid"]
       fi
     fi
