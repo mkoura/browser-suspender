@@ -1,4 +1,4 @@
-browser-suspender
+Moved to https://gitlab.com/mkourim/browser-suspender
 =================
 
 #### Suspend out-of-focus browser (Firefox) to save battery from useless CPU usage.
